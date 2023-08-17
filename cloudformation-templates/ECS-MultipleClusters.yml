@@ -1,0 +1,222 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an Amazon ECS infrastructure.'
+
+Parameters:
+  ClusterNames:
+    Type: List<String>
+    Description: Names for the ECS clusters
+
+Resources:
+  {% for clusterName in ClusterNames %}
+  Cluster{{ loop.index }}:
+    Type: 'AWS::ECS::Cluster'
+    Properties:
+      ClusterName: !Ref ClusterName{{ loop.index }}
+  {% endfor %}
+
+  ApplicationLoadBlancer{{ loop.index }}:
+    Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+    Properties:
+      Name: !Ref ApplicationLoadBlancerName{{ loop.index }}
+      Subnets:
+        - !Ref PublicSubnetOne{{ loop.index }}
+        - !Ref PublicSubnetTwo{{ loop.index }}
+      Type: application
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: 200
+      SecurityGroups:
+        - !GetAtt ApplicationLoadBlancerSG{{ loop.index }}.GroupId
+
+  LogGroup{{ loop.index }}:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref LogGroupName{{ loop.index }}
+
+  ApplicationTargetGroup{{ loop.index }}:
+    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+    Properties:
+      Name: !Ref TargetGroupName{{ loop.index }}
+      VpcId: !Ref VpcId{{ loop.index }}
+      Protocol: HTTP
+      Port: 80
+      HealthCheckPath: /
+      TargetType: ip
+
+  Listener{{ loop.index }}:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref ApplicationTargetGroup{{ loop.index }}
+          Type: forward
+      LoadBalancerArn: !Ref ApplicationLoadBlancer{{ loop.index }}
+      Port: 80
+      Protocol: HTTP
+
+  HTTPSlistener{{ loop.index }}:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    DependsOn: ApplicationLoadBlancer{{ loop.index }}
+    Properties:
+      DefaultActions:
+          - TargetGroupArn: !Ref ApplicationTargetGroup{{ loop.index }}
+            Type: forward
+      LoadBalancerArn: !Ref ApplicationLoadBlancer{{ loop.index }}
+      Port: '443'
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArnLink{{ loop.index }}
+
+  ApplicationLoadBlancerSG{{ loop.index }}:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: SG for the ALB
+      GroupName: !Sub "${Environment}-ApplicationLoadBlancerSG{{ loop.index }}"
+      VpcId: !Ref VpcId{{ loop.index }}
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+
+  ContainerSecurityGroup{{ loop.index }}:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the Fargate containers
+      VpcId: !Ref VpcId{{ loop.index }}
+
+  EcsSecurityGroupIngressFromPublicALB{{ loop.index }}:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the public ALB
+      GroupId: !Ref ContainerSecurityGroup{{ loop.index }}
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref ApplicationLoadBlancerSG{{ loop.index }}
+
+  LoadBalancerRule{{ loop.index }}:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref ApplicationTargetGroup{{ loop.index }}
+          Type: "forward"
+      Conditions:
+        - Field: path-pattern
+          Values: [/]
+      ListenerArn: !Ref Listener{{ loop.index }}
+      Priority: 1
+
+  ExecutionRole{{ loop.index }}:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ecs-tasks.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Path: /
+      Policies:
+        - PolicyName: secrets
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "secretsmanager:GetSecretValue"
+                  - "kms:Decrypt"
+                Resource:
+                  - arn:aws:secretsmanager:*
+                  - arn:aws:kms:*
+
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ecs:CreateCluster"
+                  - "ecs:DeregisterContainerInstance"
+                  - "ecs:DiscoverPollEndpoint"
+                  - "ecs:Poll"
+                  - "ecs:RegisterContainerInstance"
+                  - "ecs:StartTelemetrySession"
+                  - "ecs:Submit*"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "ecr:GetAuthorizationToken"
+                  - "ecr:BatchGetImage"
+                  - "ecr:GetDownloadUrlForLayer"
+                Resource: "*"
+
+  TaskRole{{ loop.index }}:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: /
+      RoleName: !Ref TaskRoleName{{ loop.index }}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: GetAccessToSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "secretsmanager:GetSecretValue"
+                  - "kms:Decrypt"
+                Resource:
+                  - arn:aws:secretsmanager:*
+                  - arn:aws:kms:*
+
+  TaskDefinition{{ loop.index }}:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties:
+      Family: !Ref ServiceName{{ loop.index }}
+      ExecutionRoleArn: !Ref ExecutionRole{{ loop.index }}
+      TaskRoleArn: !Ref TaskRole{{ loop.index }}
+      RequiresCompatibilities:
+               - FARGATE
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      NetworkMode: awsvpc
+      ContainerDefinitions:
+        - Name: !Ref ContainerName{{ loop.index }}
+          Image: !Ref DockerImage
+          MemoryReservation: 512
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref ServiceName
+
+  Service{{ loop.index }}:
+    Type: AWS::ECS::Service
+    DependsOn: Listener{{ loop.index }}
+    Properties:
+      ServiceName: !Ref ServiceName{{ loop.index }}
+      Cluster: !Ref ClusterName
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref DesiredCount
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ContainerSecurityGroup{{ loop.index }}
+          Subnets:
+            - !Ref PublicSubnetOne{{ loop.index }}
+            - !Ref PublicSubnetTwo{{ loop.index }}
+      TaskDefinition: !Ref TaskDefinition{{ loop.index }}
+      LoadBalancers:
+        - ContainerName: !Ref ContainerName{{ loop.index }}
+          ContainerPort: 80
+          TargetGroupArn: !Ref ApplicationTargetGroup{{ loop.index }}
+

@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an Amazon RDS instance.'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Select the appropriate environment
+    AllowedValues:
+      - dev
+      - test
+      - uat
+      - prod
+
+  VpcId:
+    Type: String
+    Default: vpc-092eb0b1df88e97d4	
+
+  DBInstanceName:
+    Type: String
+    Description: Enter one of the possible instance type for database
+    AllowedValues:
+      - db.t2.micro
+      - db.t2.small
+      - db.t2.medium
+      - db.t2.large
+
+  DBInstanceClass:
+    Description: 'RDS instance class'
+    Type: String
+    Default: db.t2.micro
+
+  DBAllocatedStorage:
+    Description: 'Amount of storage for the RDS instance'
+    Type: Number
+    Default: 5
+
+  DBMasterUsername:
+    Description: 'Master username for the RDS instance'
+    Type: String
+
+  DBMasterUserPassword:
+    Description: 'Master user password for the RDS instance'
+    Type: String
+    NoEcho: true
+
+  DBEngine:
+    Description: 'Database engine to use for the RDS instance'
+    Type: String
+    Default: mysql
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+
+
+Resources:
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupName: !Join [ '-', [ !Ref Environment, 'dbsubnetgroup' ] ]
+      SubnetIds: !Ref SubnetIds
+      DBSubnetGroupDescription: description
+
+  DBSecurityGroup:
+    Type: 'AWS::RDS::DBSecurityGroup'
+    Properties:
+      EC2VpcId: !Ref VpcId
+      GroupDescription: 'Security group for the RDS instance'
+      DBSecurityGroupIngress:
+        - 
+          EC2SecurityGroupName: !Join [ '-', [ !Ref Environment, 'ec2securitygroup' ] ]
+          
+
+  EC2SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for the EC2 instance'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupName: !Join [ '-', [ !Ref Environment, 'dbsubnetgroup' ] ]
+
+  DBInstance:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBName: !Ref Environment
+      DBInstanceIdentifier: !Join [ '-', [ !Ref Environment, !Ref DBInstanceName ] ]
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      Engine: !Ref DBEngine
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterUserPassword
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      MultiAZ: false
+      StorageType: gp2
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref Environment, !Ref DBInstanceName ] ]

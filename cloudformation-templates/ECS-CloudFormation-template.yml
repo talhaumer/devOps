@@ -1,0 +1,320 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an Amazon ECS infrastructure.'
+
+Parameters:
+  ClusterName:
+    Type: String
+    Description: Name for the ECS cluster
+
+  ServiceName:
+    Type: String
+    Description: Name for the ECS service
+
+  DockerImage:
+    Type: String
+    Description: Docker image for the container
+
+  TaskCpu:
+    Type: String
+    Description: CPU units for the task
+
+  TaskMemory:
+    Type: String
+    Description: Memory limit for the task
+
+  ContainerPort:
+    Type: Number
+    Description: Port number for the container
+
+  LogGroupName:
+    Type: String
+    Description: Name of the CloudWatch Logs group
+
+  DesiredCount:
+    Type: Number
+    Description: Desired number of tasks in the ECS service
+ 
+  TargetGroupName:
+    Type: String
+    Description: List of target group name
+  
+  CertificateArnLink:
+    Type: String
+    Description: Add link of certificate arn link
+  
+  ApplicationLoadBlancerName:
+    Type: String
+    Description: Name of the application load blancer
+  
+  Environment:
+    Type: String
+    Description: Select the appropriate environment
+    Default: prod
+    AllowedValues:
+      - dev
+      - test
+      - uat
+      - prod
+
+  TaskRoleName:
+    Type: String
+    Description: Name of the task role
+
+  
+  VpcId:
+    Type: String
+
+  PublicSubnetOne:
+    Description: 'Value of the first public subnet'
+    Type: String
+    
+  PublicSubnetTwo:
+    Description: 'Value of the second public subnet'
+    Type: String
+
+  PrivateSubnetOne:
+    Description: 'Value of the first public subnet'
+    Type: String
+    
+  PrivateSubnetTwo:
+    Description: 'Value of the second public subnet'
+    Type: String
+
+  ContainerName:
+    Type: String
+    Description: Enter the name of container
+
+    
+
+Resources:
+  Cluster:
+    Type: 'AWS::ECS::Cluster'
+    Properties:
+      ClusterName: !Ref ClusterName
+
+  ApplicationLoadBlancer:
+    Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+    Properties:
+      Name: !Ref ApplicationLoadBlancerName
+      Subnets:
+        - !Ref PublicSubnetOne
+        - !Ref PublicSubnetTwo
+      Type: application
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: 200
+      SecurityGroups:
+        - !GetAtt ApplicationLoadBlancerSG.GroupId
+
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref LogGroupName
+
+
+  ApplicationTargetGroup:
+    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+    Properties:
+      Name: !Ref TargetGroupName
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 80
+      HealthCheckPath: /
+      TargetType: ip
+
+  Listener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref ApplicationTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref ApplicationLoadBlancer
+      Port: 80
+      Protocol: HTTP
+
+  HTTPSlistener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    DependsOn: ApplicationLoadBlancer
+    Properties:
+      DefaultActions:
+          - TargetGroupArn: !Ref ApplicationTargetGroup
+            Type: forward
+      LoadBalancerArn: !Ref ApplicationLoadBlancer
+      Port: '443'
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArnLink
+
+  ApplicationLoadBlancerSG:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: SG for the  ALB
+      GroupName: !Sub "${ApplicationLoadBlancerName}-ApplicationLoadBlancerSG"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+
+  ContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the Fargate containers
+      VpcId: !Ref VpcId
+
+  EcsSecurityGroupIngressFromPublicALB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the public ALB
+      GroupId: !Ref ContainerSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref ApplicationLoadBlancerSG
+
+  LoadBalancerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref ApplicationTargetGroup
+          Type: "forward"
+      Conditions:
+        - Field: path-pattern
+          Values: [/]
+      ListenerArn: !Ref Listener
+      Priority: 1
+
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ecs-tasks.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Path: /
+      Policies:
+        - PolicyName: secrets
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "secretsmanager:GetSecretValue"
+                  - "kms:Decrypt"
+                Resource:
+                  - arn:aws:secretsmanager:*
+                  - arn:aws:kms:*
+                  
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ecs:CreateCluster"
+                  - "ecs:DeregisterContainerInstance"
+                  - "ecs:DiscoverPollEndpoint"
+                  - "ecs:Poll"
+                  - "ecs:RegisterContainerInstance"
+                  - "ecs:StartTelemetrySession"
+                  - "ecs:Submit*"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "ecr:GetAuthorizationToken"
+                  - "ecr:BatchGetImage"
+                  - "ecr:GetDownloadUrlForLayer"
+                Resource: "*"
+
+  TaskRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: /
+      RoleName: !Ref TaskRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: GetAccessToSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "secretsmanager:GetSecretValue"
+                  - "kms:Decrypt"
+                Resource:
+                  - arn:aws:secretsmanager:*
+                  - arn:aws:kms:*
+
+  TaskDefinition:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties:
+      Family: !Ref ServiceName
+      ExecutionRoleArn: !Ref ExecutionRole
+      TaskRoleArn: !Ref TaskRole
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      NetworkMode: awsvpc
+      ContainerDefinitions:
+        - Name: !Ref ContainerName
+          Image: !Ref DockerImage
+          MemoryReservation: 512
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref ServiceName
+
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Listener
+    Properties:
+      ServiceName: !Ref ServiceName
+      Cluster: !Ref ClusterName
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref DesiredCount
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ContainerSecurityGroup
+          Subnets:
+            - !Ref PublicSubnetOne
+            - !Ref PublicSubnetTwo
+      TaskDefinition: !Ref TaskDefinition
+      LoadBalancers:
+        - ContainerName: !Ref ContainerName
+          ContainerPort: 80
+          TargetGroupArn: !Ref ApplicationTargetGroup
+  
+      
+
+Outputs:
+
+    EcsServiceArn:
+        Description: A reference to the created ECS service ARN
+        Value: !Ref Service
+
+    EcsClusterName:
+        Description: A reference to the created ECS service ARN
+        Value: !Ref Cluster
+
+    EcsTaskExecutionRoleArn:
+        Description: A reference to the created IAM role ARN
+        Value: !Ref ExecutionRole

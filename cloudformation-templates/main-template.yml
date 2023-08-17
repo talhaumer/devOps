@@ -1,0 +1,167 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates a network, RDS database, and an Amazon ECS infrastructure.'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: The environment name for the stack (e.g., prod, staging, dev)
+    Default: prod
+    AllowedValues:
+      - dev
+      - test
+      - uat
+      - prod
+
+  VpcName:
+    Type: String
+    Description: Name of the VPC to be created
+  
+  PrivateSubnetOneName:
+    Description: 'Name of the first private subnet'
+    Type: String
+    
+  PrivateSubnetTwoName:
+    Description: 'Name of the second private subnet'
+    Type: String
+    
+  PublicSubnetOneName:
+    Description: 'Name of the first public subnet'
+    Type: String
+    
+  PublicSubnetTwoName:
+    Description: 'Name of the second public subnet'
+    Type: String
+    
+  PublicRT:
+    Description: 'Name of the public route'
+    Type: String
+  
+  IGW:
+    Description: 'Name of the internet gateway'
+    Type: String
+  
+  VpcTemplateURL:
+    Type: String
+    Description: The path to the VPC CloudFormation template
+    Default: https://nested-cloudformation-scripts.s3.us-east-2.amazonaws.com/VPCFormation-template.yml
+
+  ECSTemplateURL:
+    Type: String
+    Description: The path to the ECS CloudFormation template
+    Default: https://nested-cloudformation-scripts.s3.us-east-2.amazonaws.com/ECS-CloudFormation-template.yml
+
+  ClusterName:
+    Type: String
+    Description: Name for the ECS cluster
+    Default: MyTestingECS-Cluster
+    
+
+  ServiceName:
+    Type: String
+    Description: Name for the ECS service
+    Default: MyTestingECS-Service
+
+  DockerImage:
+    Type: String
+    Description: Docker image for the container
+    Default: 449535093264.dkr.ecr.us-east-2.amazonaws.com/offerapproved-admin-ui:5fe73b657f2a4c2ea2d1
+
+  TaskCpu:
+    Type: String
+    Description: CPU units for the task
+    Default: 512
+
+  TaskMemory:
+    Type: String
+    Description: Memory limit for the task
+    Default: 1024
+
+  ContainerPort:
+    Type: Number
+    Description: Port number for the container
+    Default: 80
+
+  LogGroupName:
+    Type: String
+    Description: Name of the CloudWatch Logs group
+    Default: MyTestingECS-Logs
+
+  DesiredCount:
+    Type: Number
+    Description: Desired number of tasks in the ECS service
+    Default: 1
+ 
+  TargetGroupName:
+    Type: String
+    Description: List of target group name
+    Default: MyTestingECS-TG
+  
+  CertificateArnLink:
+    Type: String
+    Description: Add link of certificate arn link
+    Default: arn:aws:acm:us-east-2:449535093264:certificate/f739a484-9eac-4737-be0b-c3eaee9a1d34
+  
+  ApplicationLoadBlancerName:
+    Type: String
+    Description: Name of the application load blancer
+    Default: MyTestingECS-ALB
+
+  TaskRoleName:
+    Type: String
+    Description: Name of the task role
+    Default: MyTestingECS-TR
+
+  ContainerName:
+    Type: String
+    Description: Enter the name of container
+    Default: MyTestingECS-Container
+
+  UniqueID:
+    Type: String
+    Description: Enter the unique id for exports and imports
+
+  
+
+Resources:
+
+  VPC:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Ref VpcTemplateURL
+      Parameters:
+        Environment: !Ref Environment
+        VpcName: !Ref VpcName
+        PrivateSubnetOneName: !Ref  PrivateSubnetOneName
+        PrivateSubnetTwoName: !Ref  PrivateSubnetTwoName
+        PublicSubnetOneName:  !Ref  PublicSubnetOneName
+        PublicSubnetTwoName:  !Ref  PublicSubnetTwoName
+        PublicRT: !Ref PublicRT
+        IGW: !Ref IGW
+
+
+  ECS:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Ref ECSTemplateURL
+      TimeoutInMinutes: 20
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        PublicSubnetOne: !GetAtt VPC.Outputs.PublicSubnetOne
+        PublicSubnetTwo: !GetAtt VPC.Outputs.PublicSubnetTwo
+        PrivateSubnetOne: !GetAtt VPC.Outputs.PrivateSubnetOne
+        PrivateSubnetTwo: !GetAtt VPC.Outputs.PrivateSubnetTwo
+        ClusterName: !Ref ClusterName
+        ServiceName: !Ref ServiceName
+        ContainerName: !Ref ContainerName
+        TaskRoleName: !Ref TaskRoleName
+        ApplicationLoadBlancerName: !Ref ApplicationLoadBlancerName
+        CertificateArnLink: !Ref CertificateArnLink
+        TargetGroupName: !Ref TargetGroupName
+        DesiredCount: !Ref DesiredCount
+        LogGroupName: !Ref LogGroupName
+        ContainerPort: !Ref ContainerPort
+        TaskMemory: !Ref TaskMemory
+        TaskCpu: !Ref TaskCpu
+        DockerImage: !Ref DockerImage
+        

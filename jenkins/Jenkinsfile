@@ -1,0 +1,146 @@
+pipeline {
+    agent any
+
+    post {
+      failure {
+        updateGitlabCommitStatus name: 'build', state: 'failed'
+      }
+      success {
+        updateGitlabCommitStatus name: 'build', state: 'success'
+      }
+      aborted {
+        updateGitlabCommitStatus name: 'build', state: 'canceled'
+      }
+    }
+    options {
+      gitLabConnection('gitlab-webhook-connection')
+    }
+ //   triggers {
+ //       gitlab(triggerOnPush: true, triggerOnMergeRequest: true, branchFilterType: 'All')
+ //   }
+
+    stages {
+        stage('Wipe Directory') {
+            steps {
+                sh '''
+                    rm -rf /home/jenkins/path-to-jenkins-folder
+                '''
+            }
+        }
+
+        stage('CI Open MergeRequest') {
+            when {
+                  expression { gitlabMergeRequestState == 'opened' }
+            }
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    //branches: [[name: "${params.BRANCH}"]],
+                    branches: [[name: "${gitlabSourceBranch}"]],
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [
+                        [$class: 'CleanBeforeCheckout'],
+                        [$class: 'WipeWorkspace'],
+                        [$class: 'CloneOption', shallow: true, depth: 0],
+                        [$class: 'RelativeTargetDirectory', relativeTargetDir: '/home/jenkins/path-to-jenkins-folder']
+                    ],
+                    submoduleCfg: [],
+                    userRemoteConfigs: [
+                        [credentialsId: 'git-access-by-jenkins', url: 'https://gitlab.com/AWS-UserName/offer-approved-apis.git']
+                    ]
+                ])
+
+                sh '''
+                cd /home/jenkins/path-to-jenkins-folder
+                npm install
+                npm run lint
+                
+            '''
+            }
+        }
+
+        stage('CI Merged MergeRequest') {
+            when {
+                expression { gitlabMergeRequestState == 'merged' }
+            }
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    //branches: [[name: "${params.BRANCH}"]],
+                    branches: [[name: "${gitlabTargetBranch}"]],
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [
+                        [$class: 'CleanBeforeCheckout'],
+                        [$class: 'WipeWorkspace'],
+                        [$class: 'CloneOption', shallow: true, depth: 0],
+                        [$class: 'RelativeTargetDirectory', relativeTargetDir: '/home/jenkins/path-to-jenkins-folder']
+                    ],
+                    submoduleCfg: [],
+                    userRemoteConfigs: [
+                        [credentialsId: 'git-access-by-jenkins', url: 'https://gitlab.com/AWS-UserName/offer-approved-apis.git']
+                    ]
+                ])
+
+                sh '''
+                cd /home/jenkins/path-to-jenkins-folder
+                npm install
+                npm run lint
+                
+            '''
+            }
+        }
+
+        stage('ImageCreation') {
+            when {
+                expression { gitlabMergeRequestState == 'merged' }
+            }
+            steps {
+                sh '''
+                    export AWS_PROFILE=AWS-UserName
+
+                    ECR_REGISTRY=pass_you_ecr
+                    ECR_REPOSITORY=ecr-RepoName
+                    IMAGE_TAG=`cat /proc/sys/kernel/random/uuid | sed 's/[-]//g' | head -c 20; echo;`
+                    docker rmi $(docker images --filter "dangling=true" -q --no-trunc) || true
+                    docker image ls -q | xargs -I {} docker image rm -f {} || true
+
+                    cd /home/jenkins/enter-name-of-stack
+                    aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin pass_you_ecr
+                    docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./
+                    docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+ 
+                '''
+
+            }
+        }
+
+        stage('Deployment-to-ecs') {
+                when {
+                    expression { gitlabMergeRequestState == 'merged' }
+                }
+                steps {
+                sh '''
+                    export AWS_PROFILE=AWS-UserName
+                    
+                    ECR_REGISTRY=pass_you_ecr
+                    ECR_REPOSITORY=ecr-RepoName
+                    
+                    imagetag=`aws ecr describe-images --output json --repository-name ecr-RepoName --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' | jq . --raw-output`
+                    cd /home/jenkins/enter-name-of-stack/cloudformation
+                    aws cloudformation deploy --template-file offerapproved-dev.yaml \
+                    --capabilities CAPABILITY_NAMED_IAM \
+                    --stack-name enter-name-of-stack \
+                    --region us-east-2 \
+                    --parameter-overrides \
+                    ImageUrl=$ECR_REGISTRY/$ECR_REPOSITORY:$imagetag
+                    
+                '''
+
+            }
+        }
+               
+        
+
+    }
+}
+

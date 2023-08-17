@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates a network, RDS database, and an Amazon ECS infrastructure.'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: The environment name for the stack (e.g., prod, staging, dev)
+  VpcName:
+    Type: String
+    Description: Name of the VPC to be created
+  
+  PrivateSubnetOneName:
+    Description: 'Name of the first private subnet'
+    Type: String
+    
+  PrivateSubnetTwoName:
+    Description: 'Name of the second private subnet'
+    Type: String
+    
+  PublicSubnetOneName:
+    Description: 'Name of the first public subnet'
+    Type: String
+    
+  PublicSubnetTwoName:
+    Description: 'Name of the second public subnet'
+    Type: String
+    
+  PublicRT:
+    Description: 'Name of the public route'
+    Type: String
+  
+  IGW:
+    Description: 'Name of the internet gateway'
+    Type: String
+
+  # RdsTemplateURL:
+  #   Type: String
+  #   Description: The path to the RDS CloudFormation template
+  
+  VpcTemplateURL:
+    Type: String
+    Description: The path to the VPC CloudFormation template
+
+  
+
+Resources:
+  VPC:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Ref VpcTemplateURL
+      Parameters:
+        Environment: !Ref Environment
+        VpcName: !Ref VpcName
+        PrivateSubnetOneName: !Ref  PrivateSubnetOneName
+        PrivateSubnetTwoName: !Ref  PrivateSubnetTwoName
+        PublicSubnetOneName:  !Ref  PublicSubnetOneName
+        PublicSubnetTwoName:  !Ref  PublicSubnetTwoName
+        PublicRT: !Ref PublicRT
+        IGW: !Ref IGW
+
+  RDS:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Ref RdsTemplateURL
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !GetAtt VPC.Outputs.VpcId
+
+
